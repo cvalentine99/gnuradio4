@@ -140,9 +140,10 @@ protected:
     }
 
     template<typename TMethod>
-    std::expected<void, Error> invokeLifecycleMethod(TMethod method, const std::source_location& location) {
+    std::expected<void, Error> invokeLifecycleMethod(TMethod method, State targetState, const std::source_location& location) {
         try {
             (static_cast<TDerived*>(this)->*method)();
+            setAndNotifyState(targetState);
             return {};
         } catch (const gr::exception& e) {
             setAndNotifyState(State::ERROR);
@@ -197,43 +198,45 @@ public:
                 location});
         }
 
-        setAndNotifyState(newState);
-
         if constexpr (std::is_same_v<TDerived, void>) {
+            setAndNotifyState(newState);
             return {};
         } else {
-            // Call specific methods in TDerived based on the state
+            // Call specific methods in TDerived based on the state.
+            // State is set after the callback succeeds (or to ERROR if it throws).
             if constexpr (requires(TDerived& d) { d.init(); }) {
                 if (oldState == State::IDLE && newState == State::INITIALISED) {
-                    return invokeLifecycleMethod(&TDerived::init, location);
+                    return invokeLifecycleMethod(&TDerived::init, newState, location);
                 }
             }
             if constexpr (requires(TDerived& d) { d.start(); }) {
                 if (oldState == State::INITIALISED && newState == State::RUNNING) {
-                    return invokeLifecycleMethod(&TDerived::start, location);
+                    return invokeLifecycleMethod(&TDerived::start, newState, location);
                 }
             }
             if constexpr (requires(TDerived& d) { d.stop(); }) {
                 if (newState == State::REQUESTED_STOP) {
-                    return invokeLifecycleMethod(&TDerived::stop, location);
+                    return invokeLifecycleMethod(&TDerived::stop, newState, location);
                 }
             }
             if constexpr (requires(TDerived& d) { d.pause(); }) {
                 if (newState == State::REQUESTED_PAUSE) {
-                    return invokeLifecycleMethod(&TDerived::pause, location);
+                    return invokeLifecycleMethod(&TDerived::pause, newState, location);
                 }
             }
             if constexpr (requires(TDerived& d) { d.resume(); }) {
                 if ((oldState == State::REQUESTED_PAUSE || oldState == State::PAUSED) && newState == State::RUNNING) {
-                    return invokeLifecycleMethod(&TDerived::resume, location);
+                    return invokeLifecycleMethod(&TDerived::resume, newState, location);
                 }
             }
             if constexpr (requires(TDerived& d) { d.reset(); }) {
                 if (oldState != State::IDLE && newState == State::INITIALISED) {
-                    return invokeLifecycleMethod(&TDerived::reset, location);
+                    return invokeLifecycleMethod(&TDerived::reset, newState, location);
                 }
             }
 
+            // No lifecycle method matched — set state directly
+            setAndNotifyState(newState);
             return {};
         }
     }
